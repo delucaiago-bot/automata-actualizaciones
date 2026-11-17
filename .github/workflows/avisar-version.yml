@@ -10,6 +10,11 @@ on:
         required: true
         default: true
         type: boolean
+      test_notification:
+        description: Enviar una notificación de prueba visible, sin anunciar una actualización
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -28,6 +33,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+          TEST_NOTIFICATION: ${{ github.event_name == 'workflow_dispatch' && inputs.test_notification || false }}
         run: |
           python3 - <<'PY'
           import base64
@@ -100,9 +106,18 @@ jobs:
           dry_run = os.environ.get('DRY_RUN', 'false').lower() == 'true'
           payload = {'validate_only': dry_run, 'message': {'topic': 'updates', 'android': {'priority': 'high'},
               'data': {'type': 'update', 'versionName': version, 'versionCode': code, 'notes': notes}}}
+          test_notification = os.environ.get('TEST_NOTIFICATION', 'false').lower() == 'true'
+          if test_notification:
+              payload['message'].pop('data')
+              payload['message']['notification'] = {
+                  'title': 'Prueba de notificaciones de Automata',
+                  'body': 'Este es un aviso de prueba. No hay ninguna actualización pendiente.'}
+              payload['message']['android']['notification'] = {
+                  'channel_id': 'app_updates', 'icon': 'ic_stat', 'tag': 'automata-push-test'}
           result = request_json('https://fcm.googleapis.com/v1/projects/automata-actualizaciones/messages:send',
               body=json.dumps(payload, ensure_ascii=False).encode('utf-8'),
               headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json; charset=utf-8'})
-          print(('Validado sin enviar' if dry_run else 'Aviso enviado') + f': Automata {version} (código {code}), topic updates')
+          label = 'notificación de prueba de Automata' if test_notification else f'Automata {version} (código {code})'
+          print(('Validado sin enviar' if dry_run else 'Aviso enviado') + f': {label}, topic updates')
           print(result.get('name', 'Validación correcta'))
           PY
