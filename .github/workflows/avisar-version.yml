@@ -1,0 +1,99 @@
+name: Avisar versión nueva
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Validar el aviso sin enviarlo
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  avisar:
+    if: >-
+      vars.FIREBASE_PUSH_ENABLED == 'true' &&
+      (github.event_name == 'workflow_dispatch' || !github.event.release.prerelease)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validar la versión y enviar el aviso de Firebase
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+        run: |
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          import re
+          import subprocess
+          import tempfile
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          def request_json(url, body=None, headers=None):
+              req = urllib.request.Request(url, data=body, headers=headers or {})
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as response:
+                      return json.load(response)
+              except urllib.error.HTTPError as error:
+                  raise SystemExit(f"Error HTTP {error.code} en {urllib.parse.urlsplit(url).hostname}")
+
+          with open(os.environ['GITHUB_EVENT_PATH'], encoding='utf-8') as source:
+              event = json.load(source)
+          repo = os.environ['REPOSITORY']
+          if repo != 'delucaiago-bot/automata-actualizaciones':
+              raise SystemExit('Repositorio de publicación inesperado')
+          release = event.get('release') or request_json(
+              f'https://api.github.com/repos/{repo}/releases/latest',
+              headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+          if release.get('draft') or release.get('prerelease'):
+              raise SystemExit('Solo se anuncian versiones estables publicadas')
+          asset = next((asset for asset in release.get('assets', []) if
+              re.fullmatch(r'automata-([A-Za-z0-9.+_-]+)-(\d+)\.apk', asset.get('name', '')) and asset.get('size', 0) > 0), None)
+          if not asset or not asset.get('browser_download_url', '').startswith(f'https://github.com/{repo}/releases/download/'):
+              raise SystemExit('La versión no contiene un APK válido de Automata')
+          version, code = re.fullmatch(r'automata-([A-Za-z0-9.+_-]+)-(\d+)\.apk', asset['name']).groups()
+          credentials = json.loads(os.environ['FIREBASE_SERVICE_ACCOUNT'])
+          if credentials.get('project_id') != 'automata-actualizaciones':
+              raise SystemExit('La credencial no pertenece al proyecto Firebase de Automata')
+
+          def b64(value):
+              return base64.urlsafe_b64encode(value).rstrip(b'=').decode('ascii')
+
+          now = int(time.time())
+          header = b64(json.dumps({'alg': 'RS256', 'typ': 'JWT'}).encode())
+          claims = b64(json.dumps({'iss': credentials['client_email'],
+              'scope': 'https://www.googleapis.com/auth/firebase.messaging',
+              'aud': 'https://oauth2.googleapis.com/token', 'iat': now, 'exp': now + 3600}).encode())
+          unsigned = (header + '.' + claims).encode('ascii')
+          with tempfile.TemporaryDirectory() as directory:
+              keyfile = os.path.join(directory, 'key.pem')
+              with open(keyfile, 'w', encoding='ascii') as key:
+                  key.write(credentials['private_key'])
+              os.chmod(keyfile, 0o600)
+              signature = subprocess.run(['openssl', 'dgst', '-sha256', '-sign', keyfile],
+                  input=unsigned, check=True, capture_output=True).stdout
+          assertion = unsigned.decode('ascii') + '.' + b64(signature)
+          token = request_json('https://oauth2.googleapis.com/token', body=urllib.parse.urlencode({
+              'grant_type': 'urn:ietf:params:oauth:grant-type:jwt-bearer', 'assertion': assertion}).encode())['access_token']
+          notes = (release.get('body') or '').encode('utf-8')[:1800].decode('utf-8', errors='ignore')
+          dry_run = os.environ.get('DRY_RUN', 'false').lower() == 'true'
+          payload = {'validate_only': dry_run, 'message': {'topic': 'updates', 'android': {'priority': 'high'},
+              'data': {'type': 'update', 'versionName': version, 'versionCode': code, 'notes': notes}}}
+          result = request_json('https://fcm.googleapis.com/v1/projects/automata-actualizaciones/messages:send',
+              body=json.dumps(payload, ensure_ascii=False).encode('utf-8'),
+              headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json; charset=utf-8'})
+          print(('Validado sin enviar' if dry_run else 'Aviso enviado') + f': Automata {version} (código {code}), topic updates')
+          print(result.get('name', 'Validación correcta'))
+          PY
