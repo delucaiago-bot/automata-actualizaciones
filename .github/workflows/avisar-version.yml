@@ -47,7 +47,14 @@ jobs:
                   with urllib.request.urlopen(req, timeout=30) as response:
                       return json.load(response)
               except urllib.error.HTTPError as error:
-                  raise SystemExit(f"Error HTTP {error.code} en {urllib.parse.urlsplit(url).hostname}")
+                  host = urllib.parse.urlsplit(url).hostname
+                  detail = ''
+                  if host == 'fcm.googleapis.com':
+                      try:
+                          detail = ': ' + str(json.load(error).get('error', {}).get('message', ''))[:1000]
+                      except (ValueError, AttributeError):
+                          pass
+                  raise SystemExit(f"Error HTTP {error.code} en {host}{detail}")
 
           with open(os.environ['GITHUB_EVENT_PATH'], encoding='utf-8') as source:
               event = json.load(source)
