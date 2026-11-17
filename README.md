@@ -7,4 +7,6 @@ Este repositorio contiene los APK y el flujo de avisos de Firebase Cloud Messagi
 
 Cada versión incluye un archivo `automata-<versión>-<código>.apk` y sus novedades. Automata comprueba las actualizaciones al abrirse, desde Ajustes y periódicamente en segundo plano.
 
-La acción **Avisar versión nueva** envía el aviso cuando se publica una release estable. Necesita el secreto `FIREBASE_SERVICE_ACCOUNT` del proyecto `automata-actualizaciones` y la variable `FIREBASE_PUSH_ENABLED=true`. La variable permanece desactivada hasta autorizar y verificar la credencial de publicación. El lanzamiento manual permite validar el aviso sin enviarlo.
+La acción **Avisar versión nueva** envía el aviso cuando se publica una release estable. El envío automático está activado mediante el secreto `FIREBASE_SERVICE_ACCOUNT` y la variable `FIREBASE_PUSH_ENABLED=true`.
+
+La cuenta de envío es exclusiva de Automata y tiene únicamente el rol de Firebase Cloud Messaging en el proyecto `automata-actualizaciones`. Su clave privada se guarda como secreto de GitHub Actions. El lanzamiento manual con `dry_run=true` permite validar el aviso sin enviarlo; la validación inicial se completó correctamente.
