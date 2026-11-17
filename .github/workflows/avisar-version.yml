@@ -74,6 +74,8 @@ jobs:
           credentials = json.loads(os.environ['FIREBASE_SERVICE_ACCOUNT'])
           if credentials.get('project_id') != 'automata-actualizaciones':
               raise SystemExit('La credencial no pertenece al proyecto Firebase de Automata')
+          if credentials.get('client_email') != 'github-updates@automata-actualizaciones.iam.gserviceaccount.com':
+              raise SystemExit('La cuenta de envío no es la cuenta dedicada de Automata')
 
           def b64(value):
               return base64.urlsafe_b64encode(value).rstrip(b'=').decode('ascii')
